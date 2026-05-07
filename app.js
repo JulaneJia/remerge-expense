@@ -7,7 +7,7 @@
 // Then replace ACCESS_CODE_HASH below.
 //
 // Default code: remerge2026
-const ACCESS_CODE_HASH = 'b0c4669e2f1b5c35607cc17a41614d5e4ed2a04a3cbff52e3b40e9376e3dc8f7';
+const ACCESS_CODE_HASH = '702034fedf319f7169c70adcad99705ad001c0fb6a2c9e8e6150750449ea9a8b';
 const ACCESS_SESSION_KEY = 'remerge_access_ok';
 
 async function hashCode(code) {
