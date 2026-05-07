@@ -1,0 +1,350 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="Expense">
+  <title>Remerge Expense</title>
+  <link rel="manifest" href="manifest.json">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<!-- ── Access Gate ── -->
+<div id="access-gate" style="
+  display:none; position:fixed; inset:0; background:#fff;
+  z-index:9999; flex-direction:column; align-items:center;
+  justify-content:center; padding:32px;
+">
+  <div style="font-size:48px; margin-bottom:16px">💼</div>
+  <div style="font-size:22px; font-weight:700; margin-bottom:6px">Remerge Expense</div>
+  <div style="font-size:14px; color:#9ca3af; margin-bottom:32px">Enter access code to continue</div>
+  <input id="gate-input" type="password" inputmode="numeric" maxlength="8"
+    placeholder="Access code"
+    style="width:100%; max-width:300px; padding:14px; font-size:18px; text-align:center;
+           border:1.5px solid #e5e7eb; border-radius:12px; outline:none;
+           letter-spacing:4px; margin-bottom:12px;"
+    autocomplete="off">
+  <div id="gate-error" style="color:#dc2626; font-size:13px; min-height:18px; margin-bottom:12px"></div>
+  <button onclick="checkAccessCode()"
+    style="width:100%; max-width:300px; padding:14px; background:#2563eb; color:#fff;
+           border:none; border-radius:12px; font-size:16px; font-weight:600; cursor:pointer;">
+    Continue
+  </button>
+  <div style="margin-top:20px; font-size:12px; color:#9ca3af">
+    Contact Julane to get the access code
+  </div>
+</div>
+
+<!-- ── Navigation ── -->
+<nav class="nav">
+  <button class="nav-tab active" data-tab="home">
+    <span class="icon">🏠</span>Home
+  </button>
+  <button class="nav-tab" data-tab="export">
+    <span class="icon">📤</span>Export
+  </button>
+  <button class="nav-tab" data-tab="settings">
+    <span class="icon">⚙️</span>Settings
+  </button>
+</nav>
+
+<!-- ── Home Page ── -->
+<div class="page active" id="page-home">
+
+  <div class="page-header" style="margin-top:12px">
+    <div class="month-selector">
+      <button data-month-prev>‹</button>
+      <span data-month-label></span>
+      <button data-month-next>›</button>
+    </div>
+  </div>
+
+  <div class="summary-card">
+    <div class="summary-label">Total to Reimburse</div>
+    <div class="summary-amount">¥0.00</div>
+    <div class="summary-sub">0 expenses · 0 invoices attached</div>
+    <div class="summary-row">
+      <div class="summary-stat">
+        <div class="summary-stat-val" data-stat="items">0</div>
+        <div class="summary-stat-label">Items</div>
+      </div>
+      <div class="summary-stat">
+        <div class="summary-stat-val" data-stat="cats">0</div>
+        <div class="summary-stat-label">Categories</div>
+      </div>
+      <div class="summary-stat">
+        <div class="summary-stat-val" data-stat="top">¥0</div>
+        <div class="summary-stat-label">Largest</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="expense-list"></div>
+</div>
+
+<!-- ── Export Page ── -->
+<div class="page" id="page-export">
+  <div class="page-header" style="margin-top:12px">
+    <div class="month-selector">
+      <button data-month-prev>‹</button>
+      <span data-month-label></span>
+      <button data-month-next>›</button>
+    </div>
+  </div>
+
+  <div class="export-card">
+    <h3>📊 Monthly Summary</h3>
+    <p>
+      <strong data-export-month></strong> —
+      <span data-export-count>0</span> expenses,
+      total <strong data-export-total>¥0.00</strong>
+    </p>
+    <p style="color:var(--gray-400); font-size:12px; margin-bottom:14px">
+      Export the JSON file, then run the Python generator on your laptop to create the filled Excel report.
+    </p>
+    <button class="btn btn-primary" id="btn-export-json">
+      ⬇️ Export JSON (for generator)
+    </button>
+  </div>
+
+  <div class="export-card">
+    <h3>🖼️ Receipt Photos</h3>
+    <p>Download all receipt photos you attached this month (named by receipt number).</p>
+    <button class="btn btn-primary" id="btn-export-photos" style="background:var(--green)">
+      ⬇️ Download All Photos
+    </button>
+  </div>
+
+  <div class="export-card">
+    <h3>📋 How to generate the Excel</h3>
+    <p style="margin-bottom:0; line-height:1.7; font-size:13px">
+      1. Export JSON above → save to <code>generator/data/</code><br>
+      2. Put invoice PDFs/photos in <code>generator/invoices/YYYY-MM/</code><br>
+      3. Run: <code>python generate_report.py --month 2026-02</code><br>
+      4. Open the output Excel, review, then copy rows into the official template
+    </p>
+  </div>
+</div>
+
+<!-- ── Settings Page ── -->
+<div class="page" id="page-settings">
+  <div class="page-header" style="margin-top:12px">
+    <span class="page-title">Settings</span>
+  </div>
+
+  <!-- Account: not logged in -->
+  <div data-auth-section>
+    <div class="settings-section">
+      <div class="settings-item" id="btn-sign-in">
+        <div class="settings-item-left">
+          <span class="settings-item-icon">🔑</span>
+          <div>
+            <div class="settings-item-text">Sign In</div>
+            <div class="settings-item-sub">Sync across devices</div>
+          </div>
+        </div>
+        <span class="settings-arrow">›</span>
+      </div>
+      <div class="settings-item" id="btn-register">
+        <div class="settings-item-left">
+          <span class="settings-item-icon">✨</span>
+          <div>
+            <div class="settings-item-text">Create Account</div>
+            <div class="settings-item-sub">Share with teammates</div>
+          </div>
+        </div>
+        <span class="settings-arrow">›</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Account: logged in -->
+  <div data-account-section style="display:none">
+    <div class="settings-section">
+      <div class="settings-item">
+        <div class="settings-item-left">
+          <span class="settings-item-icon">👤</span>
+          <div>
+            <div class="settings-item-text" data-user-name></div>
+            <div class="settings-item-sub" data-user-email></div>
+          </div>
+        </div>
+        <button class="btn btn-danger" id="btn-sign-out" style="padding:6px 12px; font-size:13px">Sign out</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="settings-section">
+    <div class="settings-item">
+      <div class="settings-item-left">
+        <span class="settings-item-icon">📱</span>
+        <div>
+          <div class="settings-item-text">Add to Home Screen</div>
+          <div class="settings-item-sub">Use like a native app</div>
+        </div>
+      </div>
+      <span class="settings-value">iOS: Share → Add</span>
+    </div>
+    <div class="settings-item">
+      <div class="settings-item-left">
+        <span class="settings-item-icon">💾</span>
+        <div>
+          <div class="settings-item-text">Data Storage</div>
+          <div class="settings-item-sub">Local (IndexedDB) + cloud sync</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="settings-section">
+    <div class="settings-item">
+      <div class="settings-item-left">
+        <span class="settings-item-icon">ℹ️</span>
+        <div>
+          <div class="settings-item-text">About</div>
+          <div class="settings-item-sub">Remerge Expense Tracker v1.0</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ── FAB ── -->
+<button class="fab" id="fab">+</button>
+
+<!-- ── Add/Edit Expense Drawer ── -->
+<div class="overlay" id="overlay">
+  <div class="drawer">
+    <div class="drawer-handle"></div>
+    <div class="drawer-header">
+      <span class="drawer-title" id="drawer-title">Add Expense</span>
+      <button class="drawer-close" id="btn-drawer-close">✕</button>
+    </div>
+    <div class="drawer-body">
+      <form id="expense-form" onsubmit="return false">
+
+        <div class="form-group">
+          <label class="form-label" for="form-date">Date</label>
+          <input class="form-control" type="date" id="form-date" required>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label" for="form-category">Category *</label>
+          <select class="form-control" id="form-category" required>
+            <option value="">Select category…</option>
+            <optgroup label="Travel">
+              <option value="Regular_Travel">Regular_Travel</option>
+              <option value="STA_Travel">STA_Travel</option>
+              <option value="Offsite_Travel">Offsite_Travel</option>
+            </optgroup>
+            <optgroup label="Other">
+              <option value="Client Entertainment - food and drinks">Client Entertainment - food and drinks</option>
+              <option value="Employees">Employees</option>
+              <option value="General">General</option>
+              <option value="Marketing">Marketing</option>
+              <option value="Office">Office</option>
+              <option value="Recruitment">Recruitment</option>
+              <option value="Subscriptions - LinkedIn">Subscriptions - LinkedIn</option>
+            </optgroup>
+          </select>
+        </div>
+
+        <div class="form-group" id="type-group" style="display:none">
+          <label class="form-label" for="form-type">Type *</label>
+          <select class="form-control" id="form-type">
+            <option value="">Select type…</option>
+          </select>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label" for="form-description">Description</label>
+          <input class="form-control" type="text" id="form-description"
+            placeholder="e.g. didi: from hotel to client Tigo">
+        </div>
+
+        <div class="form-group">
+          <label class="form-label">Amount *</label>
+          <div class="amount-row">
+            <input class="form-control" type="number" id="form-amount"
+              placeholder="0.00" step="0.01" min="0" required>
+            <div class="currency-badge">¥ RMB</div>
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label">Invoice Type</label>
+          <div class="pill-group" id="invoice-pills"></div>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label">Receipt / Screenshot</label>
+          <div class="photo-area" id="photo-area">
+            <input type="file" id="photo-input" accept="image/*" multiple capture="environment">
+            <div class="icon">📷</div>
+            <p>Tap to take photo or choose file</p>
+          </div>
+          <div class="photo-preview-grid" id="photo-preview-grid"></div>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label" for="form-notes">Notes (optional)</label>
+          <input class="form-control" type="text" id="form-notes"
+            placeholder="e.g. didi-合并, shared with Nan">
+        </div>
+
+        <div class="btn-row">
+          <button class="btn btn-danger" id="btn-delete" style="display:none" type="button">🗑 Delete</button>
+          <button class="btn btn-primary" id="btn-save" type="button">Save</button>
+        </div>
+
+      </form>
+    </div>
+  </div>
+</div>
+
+<!-- ── Auth Drawer ── -->
+<div class="overlay" id="auth-overlay">
+  <div class="drawer">
+    <div class="drawer-handle"></div>
+    <div class="drawer-header">
+      <span class="drawer-title">Sign In</span>
+      <button class="drawer-close" id="btn-auth-close">✕</button>
+    </div>
+    <div class="drawer-body" data-auth-mode="login">
+      <form id="auth-form" onsubmit="return false">
+        <div class="auth-error"></div>
+
+        <div class="form-group" data-auth-name-group style="display:none">
+          <label class="form-label">Name</label>
+          <input class="form-control" type="text" id="auth-name" placeholder="Julane Jia">
+        </div>
+
+        <div class="form-group">
+          <label class="form-label">Email</label>
+          <input class="form-control" type="email" id="auth-email" placeholder="you@remerge.io" autocomplete="email">
+        </div>
+
+        <div class="form-group">
+          <label class="form-label">Password</label>
+          <input class="form-control" type="password" id="auth-password" placeholder="••••••••" autocomplete="current-password">
+        </div>
+
+        <button class="btn btn-primary" id="btn-auth-submit" type="button">Continue</button>
+
+        <div class="auth-switch" data-auth-switch>
+          No account? <a id="auth-mode-switch">Register</a>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+
+<!-- ── Toast ── -->
+<div class="toast" id="toast"></div>
+
+<script src="app.js"></script>
+</body>
+</html>
