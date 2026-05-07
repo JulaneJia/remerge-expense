@@ -501,62 +501,125 @@ async function deleteExpense() {
 
 // ── Export ─────────────────────────────────────────────────────────────────
 
-async function exportJSON() {
+function safeFilename(str) {
+  return (str || '').replace(/[^\w\s\-]/g, '').trim().slice(0, 25).replace(/\s+/g, '_');
+}
+
+async function exportExcel() {
   const ym = state.currentMonth;
   const items = expensesForMonth(ym);
-  const payload = {
-    month: ym,
-    exportedAt: new Date().toISOString(),
-    employeeName: state.user.name,
-    costCenter: "Sales",
-    currency: "RMB",
-    expenses: items.map((e, i) => ({
-      receiptNo: i + 1,
-      date: e.date,
-      category: e.category,
-      type: e.type || '',
-      description: e.description || '',
-      amount: e.amount,
-      currency: e.currency,
-      invoiceType: e.invoiceType || '',
-      notes: e.notes || '',
-      photos: e.photos ? e.photos.length : 0,
-    })),
-    total: monthTotal(ym),
-  };
+  if (!items.length) { showToast('No expenses this month'); return; }
 
-  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+  showToast('Generating Excel…');
+
+  const wb = XLSX.utils.book_new();
+
+  // ── Sheet 1: Expense list ──────────────────────────────────────────────
+  const headers = ['#', 'Date', 'Category', 'Type', 'Description', 'Amount (¥)', 'Currency', 'Invoice Type', 'Notes'];
+  const rows = items.map((e, i) => [
+    i + 1,
+    e.date,
+    e.category,
+    e.type || '',
+    e.description || '',
+    e.amount,
+    e.currency || 'RMB',
+    e.invoiceType || '',
+    e.notes || '',
+  ]);
+  const total = monthTotal(ym);
+  rows.push(['', '', '', '', 'TOTAL', total, '', '', '']);
+
+  const ws = XLSX.utils.aoa_to_sheet([headers, ...rows]);
+  ws['!cols'] = [
+    {wch: 4}, {wch: 12}, {wch: 36}, {wch: 36}, {wch: 45},
+    {wch: 12}, {wch: 10}, {wch: 12}, {wch: 20},
+  ];
+  XLSX.utils.book_append_sheet(wb, ws, 'Expenses');
+
+  // ── Sheet 2: Screenshots (photos as base64 images via HTML trick) ──────
+  // SheetJS free doesn't embed images — we write a photo index sheet instead,
+  // and pack the actual images into a ZIP alongside the xlsx.
+  const photoItems = items.filter(e => e.photos && e.photos.length > 0);
+
+  if (photoItems.length > 0) {
+    const photoRows = [['#', 'Date', 'Description', 'Invoice Type', 'Photo Count', 'Filenames in ZIP']];
+    photoItems.forEach((e, _) => {
+      const recNo = items.indexOf(e) + 1;
+      const names = e.photos.map((_, j) =>
+        `${recNo}_${safeFilename(e.description)}${e.photos.length > 1 ? `_${j+1}` : ''}.jpg`
+      ).join(', ');
+      photoRows.push([recNo, e.date, e.description || '', e.invoiceType || '', e.photos.length, names]);
+    });
+    const wsPhotos = XLSX.utils.aoa_to_sheet(photoRows);
+    wsPhotos['!cols'] = [{wch:4},{wch:12},{wch:40},{wch:14},{wch:12},{wch:50}];
+    XLSX.utils.book_append_sheet(wb, wsPhotos, 'Screenshots');
+  }
+
+  // Write xlsx to blob
+  const xlsxBuf = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
+
+  if (photoItems.length === 0) {
+    // No photos — just download the xlsx directly
+    const blob = new Blob([xlsxBuf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+    _triggerDownload(blob, `expense_${ym}_${safeFilename(state.user.name)}.xlsx`);
+    showToast('Excel exported');
+    return;
+  }
+
+  // Photos exist — bundle xlsx + images into one ZIP
+  const zip = new JSZip();
+  zip.file(`expense_${ym}_${safeFilename(state.user.name)}.xlsx`, xlsxBuf);
+
+  const imgFolder = zip.folder('receipts');
+  items.forEach((e, i) => {
+    if (!e.photos || !e.photos.length) return;
+    const recNo = i + 1;
+    e.photos.forEach((p, j) => {
+      const name = `${recNo}_${safeFilename(e.description)}${e.photos.length > 1 ? `_${j+1}` : ''}.jpg`;
+      const base64 = p.dataUrl.includes(',') ? p.dataUrl.split(',')[1] : p.dataUrl;
+      imgFolder.file(name, base64, { base64: true });
+    });
+  });
+
+  const zipBlob = await zip.generateAsync({ type: 'blob' });
+  _triggerDownload(zipBlob, `expense_${ym}_${safeFilename(state.user.name)}.zip`);
+  showToast('Excel + photos exported as ZIP');
+}
+
+async function exportPhotosZip() {
+  const ym = state.currentMonth;
+  const items = expensesForMonth(ym);
+  const zip = new JSZip();
+  let count = 0;
+
+  items.forEach((e, i) => {
+    if (!e.photos || !e.photos.length) return;
+    const recNo = i + 1;
+    e.photos.forEach((p, j) => {
+      const name = `${recNo}_${safeFilename(e.description)}${e.photos.length > 1 ? `_${j+1}` : ''}.jpg`;
+      const base64 = p.dataUrl.includes(',') ? p.dataUrl.split(',')[1] : p.dataUrl;
+      zip.file(name, base64, { base64: true });
+      count++;
+    });
+  });
+
+  if (!count) { showToast('No photos this month'); return; }
+
+  const blob = await zip.generateAsync({ type: 'blob' });
+  _triggerDownload(blob, `receipts_${ym}.zip`);
+  showToast(`${count} photos exported`);
+}
+
+function _triggerDownload(blob, filename) {
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
-  a.download = `expense_${ym}.json`;
+  a.download = filename;
+  document.body.appendChild(a);
   a.click();
+  document.body.removeChild(a);
   URL.revokeObjectURL(url);
-  showToast('JSON exported');
-}
-
-async function exportPhotos() {
-  const ym = state.currentMonth;
-  const items = expensesForMonth(ym);
-  const photos = [];
-  items.forEach((e, i) => {
-    if (e.photos) {
-      e.photos.forEach((p, j) => {
-        photos.push({ name: `receipt_${i+1}_${j+1}.jpg`, dataUrl: p.dataUrl });
-      });
-    }
-  });
-
-  if (!photos.length) { showToast('No photos to export'); return; }
-
-  for (const p of photos) {
-    const a = document.createElement('a');
-    a.href = p.dataUrl;
-    a.download = p.name;
-    a.click();
-    await new Promise(r => setTimeout(r, 100));
-  }
-  showToast(`${photos.length} photos downloaded`);
 }
 
 // ── Month navigation ───────────────────────────────────────────────────────
@@ -736,8 +799,8 @@ async function init() {
   });
 
   // Export buttons
-  document.getElementById('btn-export-json').addEventListener('click', exportJSON);
-  document.getElementById('btn-export-photos').addEventListener('click', exportPhotos);
+  document.getElementById('btn-export-excel').addEventListener('click', exportExcel);
+  document.getElementById('btn-export-photos').addEventListener('click', exportPhotosZip);
 
   // Auth modal
   document.getElementById('btn-sign-in').addEventListener('click', () => openAuthModal('login'));

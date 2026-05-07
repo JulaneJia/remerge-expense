@@ -102,30 +102,26 @@
       <span data-export-count>0</span> expenses,
       total <strong data-export-total>¥0.00</strong>
     </p>
-    <p style="color:var(--gray-400); font-size:12px; margin-bottom:14px">
-      Export the JSON file, then run the Python generator on your laptop to create the filled Excel report.
+  </div>
+
+  <div class="export-card">
+    <h3>📥 Export Excel</h3>
+    <p style="font-size:13px; color:var(--gray-600); margin-bottom:14px">
+      Expense list as <strong>.xlsx</strong>. If any items have receipt photos, they are embedded in a separate <em>Screenshots</em> tab, numbered to match the list.
     </p>
-    <button class="btn btn-primary" id="btn-export-json">
-      ⬇️ Export JSON (for generator)
+    <button class="btn btn-primary" id="btn-export-excel">
+      ⬇️ Export Excel (.xlsx)
     </button>
   </div>
 
   <div class="export-card">
-    <h3>🖼️ Receipt Photos</h3>
-    <p>Download all receipt photos you attached this month (named by receipt number).</p>
+    <h3>🖼️ Export Photos Only</h3>
+    <p style="font-size:13px; color:var(--gray-600); margin-bottom:14px">
+      All receipt photos this month as a <strong>.zip</strong>, named by receipt number.
+    </p>
     <button class="btn btn-primary" id="btn-export-photos" style="background:var(--green)">
-      ⬇️ Download All Photos
+      ⬇️ Download Photos (.zip)
     </button>
-  </div>
-
-  <div class="export-card">
-    <h3>📋 How to generate the Excel</h3>
-    <p style="margin-bottom:0; line-height:1.7; font-size:13px">
-      1. Export JSON above → save to <code>generator/data/</code><br>
-      2. Put invoice PDFs/photos in <code>generator/invoices/YYYY-MM/</code><br>
-      3. Run: <code>python generate_report.py --month 2026-02</code><br>
-      4. Open the output Excel, review, then copy rows into the official template
-    </p>
   </div>
 </div>
 
@@ -341,6 +337,8 @@
 <!-- ── Toast ── -->
 <div class="toast" id="toast"></div>
 
+<script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
 <script src="app.js"></script>
 </body>
 </html>
