@@ -1,17 +1,12 @@
 'use strict';
 
-// ── Access Gate ────────────────────────────────────────────────────────────
-// To change the access code: run this in browser console to get the new hash:
-//   crypto.subtle.digest('SHA-256', new TextEncoder().encode('yourcode'))
-//     .then(b => console.log([...new Uint8Array(b)].map(x=>x.toString(16).padStart(2,'0')).join('')))
-// Then replace ACCESS_CODE_HASH below.
-//
-// Default code: remerge2026
+// ── Access Gate (shared site password) ────────────────────────────────────
+// To change: echo -n "newcode" | shasum -a 256  → update hash below
 const ACCESS_CODE_HASH = '56243351131982abcb5c08407f2a92d803bd883f68d162ab37ec3caca9c14b64';
 const ACCESS_SESSION_KEY = 'remerge_access_ok';
 
-async function hashCode(code) {
-  const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(code));
+async function sha256(str) {
+  const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(str));
   return [...new Uint8Array(buf)].map(x => x.toString(16).padStart(2, '0')).join('');
 }
 
@@ -19,10 +14,11 @@ async function checkAccessCode() {
   const input = document.getElementById('gate-input').value.trim();
   const errEl = document.getElementById('gate-error');
   if (!input) { errEl.textContent = 'Please enter the access code'; return; }
-  const hash = await hashCode(input);
+  const hash = await sha256(input);
   if (hash === ACCESS_CODE_HASH) {
     sessionStorage.setItem(ACCESS_SESSION_KEY, '1');
     document.getElementById('access-gate').style.display = 'none';
+    checkLoginRequired();
   } else {
     errEl.textContent = 'Incorrect code, please try again';
     document.getElementById('gate-input').value = '';
@@ -30,18 +26,79 @@ async function checkAccessCode() {
   }
 }
 
-function showAccessGate() {
-  const gate = document.getElementById('access-gate');
-  gate.style.display = 'flex';
-  setTimeout(() => document.getElementById('gate-input').focus(), 100);
-  // Allow Enter key to submit
-  document.getElementById('gate-input').addEventListener('keydown', e => {
-    if (e.key === 'Enter') checkAccessCode();
-  });
+function checkGateOnLoad() {
+  if (!sessionStorage.getItem(ACCESS_SESSION_KEY)) {
+    const gate = document.getElementById('access-gate');
+    gate.style.display = 'flex';
+    setTimeout(() => document.getElementById('gate-input').focus(), 100);
+    document.getElementById('gate-input').addEventListener('keydown', e => {
+      if (e.key === 'Enter') checkAccessCode();
+    });
+    return false;
+  }
+  return true;
 }
 
-function checkGateOnLoad() {
-  if (!sessionStorage.getItem(ACCESS_SESSION_KEY)) showAccessGate();
+// ── Local Account System ───────────────────────────────────────────────────
+// Users stored in localStorage (device-local, no server needed)
+// Passwords stored as SHA-256 hashes
+
+const LS_USERS = 'remerge_users';
+const LS_SESSION = 'remerge_session';
+
+function getUsers() {
+  try { return JSON.parse(localStorage.getItem(LS_USERS) || '[]'); } catch { return []; }
+}
+
+function saveUsers(users) {
+  localStorage.setItem(LS_USERS, JSON.stringify(users));
+}
+
+function getSession() {
+  try { return JSON.parse(localStorage.getItem(LS_SESSION)); } catch { return null; }
+}
+
+function saveSession(user) {
+  localStorage.setItem(LS_SESSION, JSON.stringify(user));
+}
+
+function clearSession() {
+  localStorage.removeItem(LS_SESSION);
+}
+
+async function localRegister(email, password, name) {
+  const users = getUsers();
+  if (users.find(u => u.email.toLowerCase() === email.toLowerCase())) {
+    throw new Error('This email is already registered on this device');
+  }
+  const user = { id: uuid(), email: email.toLowerCase(), name, passwordHash: await sha256(password) };
+  saveUsers([...users, user]);
+  const session = { id: user.id, email: user.email, name: user.name };
+  saveSession(session);
+  return session;
+}
+
+async function localLogin(email, password) {
+  const users = getUsers();
+  const user = users.find(u => u.email.toLowerCase() === email.toLowerCase());
+  if (!user) throw new Error('No account found for this email');
+  const hash = await sha256(password);
+  if (hash !== user.passwordHash) throw new Error('Incorrect password');
+  const session = { id: user.id, email: user.email, name: user.name };
+  saveSession(session);
+  return session;
+}
+
+// ── Login required gate ────────────────────────────────────────────────────
+
+function checkLoginRequired() {
+  const session = getSession();
+  if (!session) {
+    openAuthModal('login', true); // true = required (non-dismissable)
+    return false;
+  }
+  state.user = session;
+  return true;
 }
 
 // ── Constants ──────────────────────────────────────────────────────────────
@@ -49,8 +106,6 @@ function checkGateOnLoad() {
 const DB_NAME = 'remerge_expense';
 const DB_VERSION = 1;
 const STORE = 'expenses';
-const SETTINGS_STORE = 'settings';
-const API_BASE = window.location.hostname === 'localhost' ? 'http://localhost:8000' : '';
 
 const CATEGORIES = {
   "Client Entertainment - food and drinks": [],
@@ -127,10 +182,7 @@ function openDB() {
       if (!d.objectStoreNames.contains(STORE)) {
         const s = d.createObjectStore(STORE, { keyPath: 'id' });
         s.createIndex('date', 'date');
-        s.createIndex('synced', 'synced');
-      }
-      if (!d.objectStoreNames.contains(SETTINGS_STORE)) {
-        d.createObjectStore(SETTINGS_STORE, { keyPath: 'key' });
+        s.createIndex('userId', 'userId');
       }
     };
     req.onsuccess = e => { db = e.target.result; resolve(db); };
@@ -166,102 +218,22 @@ function dbDelete(id) {
   });
 }
 
-function dbGetSetting(key) {
-  return new Promise(resolve => {
-    const req = db.transaction(SETTINGS_STORE).objectStore(SETTINGS_STORE).get(key);
-    req.onsuccess = () => resolve(req.result?.value);
-    req.onerror = () => resolve(null);
-  });
-}
-
-function dbSetSetting(key, value) {
-  return new Promise(resolve => {
-    const req = db.transaction(SETTINGS_STORE, 'readwrite').objectStore(SETTINGS_STORE).put({ key, value });
-    req.onsuccess = () => resolve();
-  });
-}
-
 // ── State ──────────────────────────────────────────────────────────────────
 
 const state = {
-  currentMonth: new Date().toISOString().slice(0, 7), // "2026-02"
+  currentMonth: new Date().toISOString().slice(0, 7),
   expenses: [],
   editingId: null,
-  photos: [],         // [{dataUrl, name}] for current form
-  token: null,
+  photos: [],
   user: null,
 };
-
-// ── Auth ───────────────────────────────────────────────────────────────────
-
-async function apiCall(method, path, body) {
-  const opts = {
-    method,
-    headers: { 'Content-Type': 'application/json' },
-  };
-  if (state.token) opts.headers['Authorization'] = `Bearer ${state.token}`;
-  if (body) opts.body = JSON.stringify(body);
-  const res = await fetch(API_BASE + path, opts);
-  if (!res.ok) throw new Error((await res.json()).detail || res.statusText);
-  return res.json();
-}
-
-async function login(email, password) {
-  const data = await apiCall('POST', '/auth/login', { email, password });
-  state.token = data.token;
-  state.user = data.user;
-  await dbSetSetting('token', data.token);
-  await dbSetSetting('user', JSON.stringify(data.user));
-}
-
-async function register(email, password, name) {
-  const data = await apiCall('POST', '/auth/register', { email, password, name });
-  state.token = data.token;
-  state.user = data.user;
-  await dbSetSetting('token', data.token);
-  await dbSetSetting('user', JSON.stringify(data.user));
-}
-
-async function tryRestoreSession() {
-  state.token = await dbGetSetting('token');
-  const userStr = await dbGetSetting('user');
-  if (userStr) state.user = JSON.parse(userStr);
-}
-
-// ── Sync ───────────────────────────────────────────────────────────────────
-
-async function syncToServer() {
-  if (!state.token) return;
-  try {
-    const all = await dbGetAll();
-    const unsynced = all.filter(e => !e.synced);
-    if (!unsynced.length) return;
-    await apiCall('POST', '/expenses/sync', { expenses: unsynced });
-    for (const e of unsynced) {
-      await dbPut({ ...e, synced: true });
-    }
-    showToast(`已同步 ${unsynced.length} 条记录`);
-  } catch {
-    // silent — will sync next time
-  }
-}
-
-async function pullFromServer() {
-  if (!state.token) return;
-  try {
-    const data = await apiCall('GET', '/expenses');
-    for (const e of data.expenses) {
-      await dbPut({ ...e, synced: true });
-    }
-  } catch {
-    // silent
-  }
-}
 
 // ── Data helpers ───────────────────────────────────────────────────────────
 
 async function loadExpenses() {
-  state.expenses = await dbGetAll();
+  const all = await dbGetAll();
+  // Only show expenses belonging to the current user
+  state.expenses = all.filter(e => e.userId === state.user?.id);
 }
 
 function expensesForMonth(ym) {
@@ -303,22 +275,18 @@ function renderHome() {
   const ym = state.currentMonth;
   const items = expensesForMonth(ym);
   const total = monthTotal(ym);
-
   const el = document.getElementById('page-home');
 
-  // Summary card
   const invoiceCount = items.filter(e => e.invoiceType && e.invoiceType !== '无需发票').length;
   el.querySelector('.summary-amount').textContent = formatAmount(total);
   el.querySelector('.summary-sub').textContent = `${items.length} expenses · ${invoiceCount} invoices attached`;
 
-  // Stats
   const cats = [...new Set(items.map(e => e.category))].length;
   el.querySelector('[data-stat="items"]').textContent = items.length;
   el.querySelector('[data-stat="cats"]').textContent = cats;
   el.querySelector('[data-stat="top"]').textContent =
     items.length ? formatAmount(Math.max(...items.map(e => e.amount))) : '¥0';
 
-  // List
   const list = el.querySelector('.expense-list');
   if (!items.length) {
     list.innerHTML = `
@@ -329,7 +297,6 @@ function renderHome() {
     return;
   }
 
-  // Group by date
   const byDate = {};
   for (const e of items) {
     (byDate[e.date] = byDate[e.date] || []).push(e);
@@ -497,6 +464,7 @@ async function saveExpense() {
 
   const expense = {
     id: state.editingId || uuid(),
+    userId: state.user.id,
     date,
     category,
     type: type || null,
@@ -506,7 +474,6 @@ async function saveExpense() {
     invoiceType,
     notes,
     photos: state.photos,
-    synced: false,
     createdAt: state.editingId
       ? state.expenses.find(e => e.id === state.editingId)?.createdAt || new Date().toISOString()
       : new Date().toISOString(),
@@ -518,7 +485,6 @@ async function saveExpense() {
   closeDrawer();
   renderHome();
   renderExport();
-  syncToServer();
   showToast(state.editingId ? 'Updated' : 'Saved');
 }
 
@@ -530,7 +496,6 @@ async function deleteExpense() {
   closeDrawer();
   renderHome();
   renderExport();
-  syncToServer();
   showToast('Deleted');
 }
 
@@ -542,7 +507,7 @@ async function exportJSON() {
   const payload = {
     month: ym,
     exportedAt: new Date().toISOString(),
-    employeeName: "Julane Jia",
+    employeeName: state.user.name,
     costCenter: "Sales",
     currency: "RMB",
     expenses: items.map((e, i) => ({
@@ -584,7 +549,6 @@ async function exportPhotos() {
 
   if (!photos.length) { showToast('No photos to export'); return; }
 
-  // Download each photo
   for (const p of photos) {
     const a = document.createElement('a');
     a.href = p.dataUrl;
@@ -631,7 +595,10 @@ function switchTab(tab) {
 
 // ── Auth modal ─────────────────────────────────────────────────────────────
 
-function openAuthModal(mode) {
+let _authRequired = false;
+
+function openAuthModal(mode, required = false) {
+  _authRequired = required;
   const overlay = document.getElementById('auth-overlay');
   overlay.classList.add('open');
   overlay.querySelector('[data-auth-mode]').dataset.authMode = mode;
@@ -640,11 +607,14 @@ function openAuthModal(mode) {
   overlay.querySelector('.auth-error').textContent = '';
   overlay.querySelector('#auth-form').reset();
 
+  // Hide close button when login is required
+  document.getElementById('btn-auth-close').style.display = required ? 'none' : 'flex';
+
   overlay.querySelector('[data-auth-switch]').innerHTML = mode === 'login'
     ? `No account? <a id="auth-mode-switch">Register</a>`
     : `Have an account? <a id="auth-mode-switch">Sign in</a>`;
   document.getElementById('auth-mode-switch').addEventListener('click', () => {
-    openAuthModal(mode === 'login' ? 'register' : 'login');
+    openAuthModal(mode === 'login' ? 'register' : 'login', required);
   });
 }
 
@@ -656,30 +626,37 @@ async function submitAuth() {
   const name = document.getElementById('auth-name').value.trim();
   const errEl = overlay.querySelector('.auth-error');
 
+  if (!email) { errEl.textContent = 'Please enter your email'; return; }
+  if (!password) { errEl.textContent = 'Please enter your password'; return; }
+  if (mode === 'register' && !name) { errEl.textContent = 'Please enter your name'; return; }
+
   try {
+    let session;
     if (mode === 'login') {
-      await login(email, password);
+      session = await localLogin(email, password);
     } else {
-      await register(email, password, name);
+      session = await localRegister(email, password, name);
     }
+    state.user = session;
     overlay.classList.remove('open');
-    renderSettings();
-    showToast(mode === 'login' ? 'Signed in' : 'Account created');
-    await pullFromServer();
     await loadExpenses();
     renderHome();
+    renderSettings();
+    showToast(mode === 'login' ? `Welcome back, ${session.name}` : `Account created, welcome ${session.name}!`);
   } catch (err) {
     errEl.textContent = err.message;
   }
 }
 
 async function signOut() {
-  state.token = null;
+  clearSession();
   state.user = null;
-  await dbSetSetting('token', null);
-  await dbSetSetting('user', null);
+  state.expenses = [];
+  renderHome();
   renderSettings();
   showToast('Signed out');
+  // Require login again
+  openAuthModal('login', true);
 }
 
 // ── Photo input ────────────────────────────────────────────────────────────
@@ -698,10 +675,19 @@ function handlePhotoInput(files) {
 // ── Init ───────────────────────────────────────────────────────────────────
 
 async function init() {
-  checkGateOnLoad();
+  // Step 1: Check shared site access code
+  const gateOk = checkGateOnLoad();
+  if (!gateOk) return; // Wait for gate submission which calls checkLoginRequired()
+
+  // Step 2: Check personal login
   await openDB();
-  await tryRestoreSession();
-  await loadExpenses();
+  const loginOk = checkLoginRequired();
+  if (!loginOk) {
+    // Auth modal is open; after login submitAuth() loads expenses and renders
+    // Still set up UI so it's ready
+  } else {
+    await loadExpenses();
+  }
 
   // Month labels
   document.querySelectorAll('[data-month-label]').forEach(el => {
@@ -709,6 +695,7 @@ async function init() {
   });
 
   renderHome();
+  renderSettings();
 
   // Nav tabs
   document.querySelectorAll('.nav-tab').forEach(btn => {
@@ -729,7 +716,7 @@ async function init() {
     updateTypeDropdown(e.target.value);
   });
 
-  // Drawer close
+  // Expense drawer close
   document.getElementById('overlay').addEventListener('click', e => {
     if (e.target === document.getElementById('overlay')) closeDrawer();
   });
@@ -752,27 +739,27 @@ async function init() {
   document.getElementById('btn-export-json').addEventListener('click', exportJSON);
   document.getElementById('btn-export-photos').addEventListener('click', exportPhotos);
 
-  // Auth
+  // Auth modal
   document.getElementById('btn-sign-in').addEventListener('click', () => openAuthModal('login'));
   document.getElementById('btn-register').addEventListener('click', () => openAuthModal('register'));
   document.getElementById('btn-sign-out').addEventListener('click', signOut);
   document.getElementById('auth-overlay').addEventListener('click', e => {
+    if (_authRequired) return; // Can't dismiss if login is required
     if (e.target === document.getElementById('auth-overlay'))
       document.getElementById('auth-overlay').classList.remove('open');
   });
   document.getElementById('btn-auth-close').addEventListener('click', () => {
+    if (_authRequired) return;
     document.getElementById('auth-overlay').classList.remove('open');
   });
   document.getElementById('btn-auth-submit').addEventListener('click', submitAuth);
+  document.getElementById('auth-password').addEventListener('keydown', e => {
+    if (e.key === 'Enter') submitAuth();
+  });
 
   // Service worker
   if ('serviceWorker' in navigator) {
-    navigator.serviceWorker.register('/sw.js').catch(() => {});
-  }
-
-  // Sync on load
-  if (state.token) {
-    pullFromServer().then(() => loadExpenses()).then(() => renderHome());
+    navigator.serviceWorker.register('/remerge-expense/sw.js').catch(() => {});
   }
 }
 
