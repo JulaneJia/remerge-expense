@@ -66,25 +66,51 @@ function clearSession() {
   localStorage.removeItem(LS_SESSION);
 }
 
+// userId is deterministic from email so the same credentials work on any device.
+// On a new device, login auto-creates a local profile (no "account not found" error).
+
 async function localRegister(email, password, name) {
+  const emailKey = email.toLowerCase();
   const users = getUsers();
-  if (users.find(u => u.email.toLowerCase() === email.toLowerCase())) {
-    throw new Error('This email is already registered on this device');
+  const existing = users.find(u => u.email === emailKey);
+  if (existing) {
+    // Already registered on this device — just verify password and log in
+    if (existing.passwordHash !== await sha256(password)) {
+      throw new Error('An account with this email already exists. Check your password.');
+    }
+    const session = { id: existing.id, email: existing.email, name: existing.name };
+    saveSession(session);
+    return session;
   }
-  const user = { id: uuid(), email: email.toLowerCase(), name, passwordHash: await sha256(password) };
+  const id = await sha256(emailKey); // deterministic — same on every device
+  const user = { id, email: emailKey, name, passwordHash: await sha256(password) };
   saveUsers([...users, user]);
-  const session = { id: user.id, email: user.email, name: user.name };
+  const session = { id, email: emailKey, name };
   saveSession(session);
   return session;
 }
 
 async function localLogin(email, password) {
+  const emailKey = email.toLowerCase();
   const users = getUsers();
-  const user = users.find(u => u.email.toLowerCase() === email.toLowerCase());
-  if (!user) throw new Error('No account found for this email');
-  const hash = await sha256(password);
-  if (hash !== user.passwordHash) throw new Error('Incorrect password');
-  const session = { id: user.id, email: user.email, name: user.name };
+  const existing = users.find(u => u.email === emailKey);
+  const id = await sha256(emailKey);
+  const passwordHash = await sha256(password);
+
+  if (existing) {
+    // Known on this device — verify password
+    if (existing.passwordHash !== passwordHash) throw new Error('Incorrect password');
+    const session = { id: existing.id, email: existing.email, name: existing.name };
+    saveSession(session);
+    return session;
+  }
+
+  // First time on this device — create local profile automatically.
+  // Name defaults to the part before @ ; user can update it in Settings later.
+  const name = emailKey.split('@')[0];
+  const user = { id, email: emailKey, name, passwordHash };
+  saveUsers([...users, user]);
+  const session = { id, email: emailKey, name };
   saveSession(session);
   return session;
 }
