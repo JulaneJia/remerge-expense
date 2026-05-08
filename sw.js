@@ -1,5 +1,6 @@
-const CACHE_NAME = 'remerge-expense-v1';
-const ASSETS = ['/', '/index.html', '/style.css', '/app.js', '/categories.json'];
+const CACHE_NAME = 'remerge-expense-v2';
+const BASE = '/remerge-expense';
+const ASSETS = [BASE + '/', BASE + '/index.html', BASE + '/style.css', BASE + '/app.js'];
 
 self.addEventListener('install', e => {
   e.waitUntil(
