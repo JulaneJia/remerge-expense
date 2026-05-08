@@ -18,7 +18,7 @@ async function checkAccessCode() {
   if (hash === ACCESS_CODE_HASH) {
     sessionStorage.setItem(ACCESS_SESSION_KEY, '1');
     document.getElementById('access-gate').style.display = 'none';
-    checkLoginRequired();
+    afterGate(); // continue the init flow that was paused
   } else {
     errEl.textContent = 'Incorrect code, please try again';
     document.getElementById('gate-input').value = '';
@@ -120,11 +120,23 @@ async function localLogin(email, password) {
 function checkLoginRequired() {
   const session = getSession();
   if (!session) {
-    openAuthModal('login', true); // true = required (non-dismissable)
+    openAuthModal('login', true);
     return false;
   }
   state.user = session;
   return true;
+}
+
+// Called after gate passes (either immediately on load, or after user enters access code)
+async function afterGate() {
+  if (!checkLoginRequired()) return; // auth modal shown; submitAuth → afterLogin
+  await afterLogin();
+}
+
+async function afterLogin() {
+  await loadExpenses();
+  renderHome();
+  renderSettings();
 }
 
 // ── Constants ──────────────────────────────────────────────────────────────
@@ -728,10 +740,8 @@ async function submitAuth() {
     }
     state.user = session;
     overlay.classList.remove('open');
-    await loadExpenses();
-    renderHome();
-    renderSettings();
-    showToast(mode === 'login' ? `Welcome back, ${session.name}` : `Account created, welcome ${session.name}!`);
+    showToast(mode === 'login' ? `Welcome back, ${session.name}` : `Welcome, ${session.name}!`);
+    await afterLogin();
   } catch (err) {
     errEl.textContent = err.message;
   }
@@ -764,27 +774,12 @@ function handlePhotoInput(files) {
 // ── Init ───────────────────────────────────────────────────────────────────
 
 async function init() {
-  // Step 1: Check shared site access code
-  const gateOk = checkGateOnLoad();
-  if (!gateOk) return; // Wait for gate submission which calls checkLoginRequired()
-
-  // Step 2: Check personal login
+  // Always init DB and bind all listeners first, regardless of gate/login state
   await openDB();
-  const loginOk = checkLoginRequired();
-  if (!loginOk) {
-    // Auth modal is open; after login submitAuth() loads expenses and renders
-    // Still set up UI so it's ready
-  } else {
-    await loadExpenses();
-  }
 
-  // Month labels
   document.querySelectorAll('[data-month-label]').forEach(el => {
     el.textContent = formatMonthLabel(state.currentMonth);
   });
-
-  renderHome();
-  renderSettings();
 
   // Nav tabs
   document.querySelectorAll('.nav-tab').forEach(btn => {
@@ -805,13 +800,11 @@ async function init() {
     updateTypeDropdown(e.target.value);
   });
 
-  // Expense drawer close
+  // Expense drawer
   document.getElementById('overlay').addEventListener('click', e => {
     if (e.target === document.getElementById('overlay')) closeDrawer();
   });
   document.getElementById('btn-drawer-close').addEventListener('click', closeDrawer);
-
-  // Save / delete
   document.getElementById('btn-save').addEventListener('click', saveExpense);
   document.getElementById('btn-delete').addEventListener('click', deleteExpense);
 
@@ -824,7 +817,7 @@ async function init() {
     document.getElementById('photo-input').click();
   });
 
-  // Export buttons
+  // Export
   document.getElementById('btn-export-excel').addEventListener('click', exportExcel);
   document.getElementById('btn-export-photos').addEventListener('click', exportPhotosZip);
 
@@ -833,7 +826,7 @@ async function init() {
   document.getElementById('btn-register').addEventListener('click', () => openAuthModal('register'));
   document.getElementById('btn-sign-out').addEventListener('click', signOut);
   document.getElementById('auth-overlay').addEventListener('click', e => {
-    if (_authRequired) return; // Can't dismiss if login is required
+    if (_authRequired) return;
     if (e.target === document.getElementById('auth-overlay'))
       document.getElementById('auth-overlay').classList.remove('open');
   });
@@ -845,11 +838,19 @@ async function init() {
   document.getElementById('auth-password').addEventListener('keydown', e => {
     if (e.key === 'Enter') submitAuth();
   });
+  document.getElementById('auth-name').addEventListener('keydown', e => {
+    if (e.key === 'Enter') submitAuth();
+  });
 
   // Service worker
   if ('serviceWorker' in navigator) {
     navigator.serviceWorker.register('/remerge-expense/sw.js').catch(() => {});
   }
+
+  // Gate check — if not passed, pause here; checkAccessCode() calls afterGate() on success
+  if (!checkGateOnLoad()) return;
+
+  await afterGate();
 }
 
 document.addEventListener('DOMContentLoaded', init);
