@@ -189,10 +189,34 @@
         <span class="settings-item-icon">💾</span>
         <div>
           <div class="settings-item-text">Data Storage</div>
-          <div class="settings-item-sub">Local (IndexedDB) + cloud sync</div>
+          <div class="settings-item-sub">Local on this device</div>
         </div>
       </div>
     </div>
+  </div>
+
+  <div class="settings-section">
+    <div class="settings-item" id="btn-backup-export" style="cursor:pointer">
+      <div class="settings-item-left">
+        <span class="settings-item-icon">📤</span>
+        <div>
+          <div class="settings-item-text">Export data backup</div>
+          <div class="settings-item-sub">Save all your records as a .json file</div>
+        </div>
+      </div>
+      <span class="settings-arrow">›</span>
+    </div>
+    <div class="settings-item" id="btn-backup-import" style="cursor:pointer">
+      <div class="settings-item-left">
+        <span class="settings-item-icon">📥</span>
+        <div>
+          <div class="settings-item-text">Import data backup</div>
+          <div class="settings-item-sub">Restore records from a backup file</div>
+        </div>
+      </div>
+      <span class="settings-arrow">›</span>
+    </div>
+    <input type="file" id="backup-file-input" accept=".json" style="display:none">
   </div>
 
   <div class="settings-section">
@@ -274,9 +298,9 @@
         <div class="form-group">
           <label class="form-label">Receipt / Screenshot</label>
           <div class="photo-area" id="photo-area">
-            <input type="file" id="photo-input" accept="image/*" multiple>
-            <div class="icon">📷</div>
-            <p>Tap to take photo or choose file</p>
+            <input type="file" id="photo-input" accept="image/*,application/pdf" multiple>
+            <div class="icon">📎</div>
+            <p>Tap to attach photo or PDF</p>
           </div>
           <div class="photo-preview-grid" id="photo-preview-grid"></div>
         </div>

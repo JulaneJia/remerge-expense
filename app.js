@@ -473,11 +473,19 @@ function getSelectedInvoiceType() {
 function renderPhotoPreviews() {
   const grid = document.getElementById('photo-preview-grid');
   if (!state.photos.length) { grid.innerHTML = ''; return; }
-  grid.innerHTML = state.photos.map((p, i) => `
-    <div class="photo-thumb">
-      <img src="${p.dataUrl}" alt="receipt ${i+1}">
-      <button class="photo-thumb-del" data-i="${i}">×</button>
-    </div>`).join('');
+  grid.innerHTML = state.photos.map((p, i) => {
+    const thumb = p.isPdf
+      ? `<div style="width:100%;height:100%;background:#fee2e2;border-radius:8px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px">
+           <span style="font-size:22px">📄</span>
+           <span style="font-size:9px;color:#991b1b;word-break:break-all;padding:0 4px;text-align:center">${p.name}</span>
+         </div>`
+      : `<img src="${p.dataUrl}" alt="receipt ${i+1}" style="width:100%;height:100%;object-fit:cover;border-radius:8px">`;
+    return `
+      <div class="photo-thumb" style="aspect-ratio:1;position:relative">
+        ${thumb}
+        <button class="photo-thumb-del" data-i="${i}">×</button>
+      </div>`;
+  }).join('');
   grid.querySelectorAll('.photo-thumb-del').forEach(b => {
     b.addEventListener('click', () => {
       state.photos.splice(Number(b.dataset.i), 1);
@@ -649,6 +657,49 @@ async function exportPhotosZip() {
   showToast(`${count} photos exported`);
 }
 
+// ── Backup / Restore ───────────────────────────────────────────────────────
+
+async function exportBackup() {
+  const all = await dbGetAll();
+  const mine = all.filter(e => e.userId === state.user?.id);
+  const payload = {
+    _type: 'remerge_backup_v1',
+    userId: state.user.id,
+    userEmail: state.user.email,
+    userName: state.user.name,
+    exportedAt: new Date().toISOString(),
+    expenses: mine,
+  };
+  const blob = new Blob([JSON.stringify(payload)], { type: 'application/json' });
+  _triggerDownload(blob, `remerge_backup_${state.user.email}_${new Date().toISOString().slice(0,10)}.json`);
+  showToast(`Exported ${mine.length} records`);
+}
+
+async function importBackup(file) {
+  let payload;
+  try {
+    payload = JSON.parse(await file.text());
+  } catch {
+    showToast('Invalid backup file'); return;
+  }
+  if (payload._type !== 'remerge_backup_v1' || !Array.isArray(payload.expenses)) {
+    showToast('Unrecognised backup format'); return;
+  }
+
+  const expenses = payload.expenses.map(e => ({ ...e, userId: state.user.id }));
+  let added = 0, skipped = 0;
+  for (const e of expenses) {
+    const existing = (await dbGetAll()).find(x => x.id === e.id);
+    if (existing) { skipped++; continue; }
+    await dbPut(e);
+    added++;
+  }
+  await loadExpenses();
+  renderHome();
+  renderExport();
+  showToast(`Imported ${added} records${skipped ? `, ${skipped} already existed` : ''}`);
+}
+
 function _triggerDownload(blob, filename) {
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
@@ -764,7 +815,11 @@ function handlePhotoInput(files) {
   for (const file of files) {
     const reader = new FileReader();
     reader.onload = e => {
-      state.photos.push({ dataUrl: e.target.result, name: file.name });
+      state.photos.push({
+        dataUrl: e.target.result,
+        name: file.name,
+        isPdf: file.type === 'application/pdf',
+      });
       renderPhotoPreviews();
     };
     reader.readAsDataURL(file);
@@ -820,6 +875,16 @@ async function init() {
   // Export
   document.getElementById('btn-export-excel').addEventListener('click', exportExcel);
   document.getElementById('btn-export-photos').addEventListener('click', exportPhotosZip);
+
+  // Backup / restore
+  document.getElementById('btn-backup-export').addEventListener('click', exportBackup);
+  document.getElementById('btn-backup-import').addEventListener('click', () => {
+    document.getElementById('backup-file-input').click();
+  });
+  document.getElementById('backup-file-input').addEventListener('change', e => {
+    const file = e.target.files[0];
+    if (file) { importBackup(file); e.target.value = ''; }
+  });
 
   // Auth modal
   document.getElementById('btn-sign-in').addEventListener('click', () => openAuthModal('login'));
